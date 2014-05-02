@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=320,user-scalable=no">
+		<title>ホモォダッシュ2</title>
+		<style>
+			body {
+				margin: 0;
+				padding: 0;
+			}
+			
+			#custom-tweet-button {
+				position: absolute;
+				top: 140px;
+				left: 80px;
+				width: 160px;
+				height: 40px;
+				display: none;
+			}
+		</style>
+		<script src="preloadjs-0.4.1.min.js"></script>
+		<script src="easeljs-0.7.1.min.js"></script>
+	</head>
+	<body>
+		<canvas id="myCanvas" width="320" height="320">HTML5対応ブラウザでプレイできます。</canvas>
+		<script type="text/javascript">
+			var fps = 30;
+			
+			var stage;
+			var loader;
+			
+			var playerImage;
+			var backgroundImage;
+			
+			var background;
+			var player;
+			var blocks;
+			var title;
+			var startButton;
+			var tweetButton;
+			var retryButton;
+			var gameoverMessage;
+			var scoreMessage;
+			
+			var blockManager;
+			
+			var startTime = new Date().getTime();
+			var frameCount = 0;
+			var beginCount = 0;
+			
+			var vx = 10;
+			
+			var distance = -vx;
+			var prevDistance = distance;
+			
+			var vy = 0;
+			
+			var taskList = new Array();
+			
+			var tryCount = 0;
+			var score = 0;
+			
+			var onGround = true;
+			
+			function init() {
+				stage = new createjs.Stage("myCanvas");
+				
+				if (createjs.Touch.isSupported()) {
+					stage.enableDOMEvents(false);
+					createjs.Touch.enable(stage);
+				}
+				
+				stage.clear();
+				
+				loader = new createjs.LoadQueue(false);
+				loader.setMaxConnections(4);
+				loader.loadManifest([
+					{ id: "player",     src: "player.png" },
+					{ id: "background", src: "background.png" }
+				]);
+				loader.on("complete", start);
+				loader.load();
+			}
+			
+			function start(event) {
+				loader.off("complete", start);
+				
+				playerImage     = loader.getResult("player");
+				backgroundImage = loader.getResult("background");
+				
+				player = new createjs.Bitmap(playerImage);
+				player.x = 80;
+				player.y = 260;
+				
+				background = new createjs.Shape();
+				background.graphics.beginBitmapFill(backgroundImage).drawRect(0, 0, 320 + 250, 320).endFill();
+				
+				blocks = new createjs.Shape();
+				
+				title = new createjs.Text("ホモォダッシュ2", "32px helvetica");
+				title.textAlign = "center";
+				title.textBaseline = "middle";
+				title.x = 160;
+				title.y = 80;
+				
+				gameoverMessage = new createjs.Text("ゲームオーバー", "32px helvetica");
+				gameoverMessage.textAlign = "center";
+				gameoverMessage.textBaseline = "middle";
+				gameoverMessage.x = 160;
+				gameoverMessage.y = 80;
+				gameoverMessage.visible = false;
+				
+				scoreMessage = new createjs.Text("Score: 0", "24px helvetica", "#FFFFFF");
+				scoreMessage.textAlign = "center";
+				scoreMessage.textBaseline = "middle";
+				scoreMessage.x = 160;
+				scoreMessage.y = 300;
+				scoreMessage.visible = false;
+				
+				function createButton(labelText, textSize, textColor, backgroundColor, width, height) {
+					var background = new createjs.Shape();
+					background .graphics.beginFill(backgroundColor).drawRect(0, 0, width, height).endFill();
+					background .alpha = 0.5;
+					
+					var label = new createjs.Text(labelText, textSize + "px helvetica", textColor);
+					label.textAlign = "center";
+					label.textBaseline = "middle";
+					label.x = width / 2;
+					label.y = height / 2;
+					
+					var button = new createjs.Container();
+					button.addChild(background);
+					button.addChild(label);
+					
+					return button;
+				}
+				
+				startButton = createButton("ゲームを始める", 24, "#000000", "#FFFFFF", 160, 40);
+				startButton.regX = 80;
+				startButton.regY = 20;
+				startButton.x = 160;
+				startButton.y = 160;
+				startButton.on("mousedown", gameInit);
+				
+				tweetButton = createButton("ツイート", 24, "#FFFFFF", "#0066FF", 160, 40);
+				tweetButton.regX = 80;
+				tweetButton.regY = 20;
+				tweetButton.x = 160;
+				tweetButton.y = 160;
+				tweetButton.visible = false;
+				
+				retryButton = createButton("リトライ", 24, "#000000", "#FFFFFF", 160, 40);
+				retryButton.regX = 80;
+				retryButton.regY = 20;
+				retryButton.x = 160;
+				retryButton.y = 220;
+				retryButton.visible = false;
+				retryButton.on("mousedown", gameInit);
+				
+				stage.addChild(background);
+				stage.addChild(blocks);
+				stage.addChild(player);
+				stage.addChild(title);
+				stage.addChild(gameoverMessage);
+				stage.addChild(scoreMessage);
+				stage.addChild(startButton);
+				stage.addChild(tweetButton);
+				stage.addChild(retryButton);
+				
+				initBlockManager();
+				
+				// move & draw
+				taskList.push(
+					function() {
+						prevDistance = distance;
+						distance += vx;
+						var offset = distance % 250;
+						background.x = -offset;
+						blocks.graphics.clear().beginFill("#804000");
+						for (var x = 0; x < 10; x++) {
+							var dist = distance + 40 * x;
+							var offset = blockManager.getBlockOffset(dist);
+							var height = blockManager.getBlockHeight(dist);
+							blocks.graphics.drawRect(40 * x - offset, 320, 40, - 40 * (height + 1));
+						}
+						blocks.graphics.endFill();
+						
+						return true;
+					}
+				);
+				
+				// checkGround
+				taskList.push(
+					function() {
+						if (tryCount % 2 == 0) {
+							vy = 0;
+							player.y = 260;
+							return true;
+						}
+						vy += 3;
+						var py = player.y;
+						var ny = py + vy;
+						var leftDistance  = distance + player.x - 10;
+						var rightDistance = distance + player.x + 10;
+						var leftHeight  = 260 - 40 * blockManager.getBlockHeight(leftDistance);
+						var rightHeight = 260 - 40 * blockManager.getBlockHeight(rightDistance);
+						var onLeftBlock = ny > leftHeight && py <= leftHeight;
+						var onRightBlock = ny > rightHeight && py <= rightHeight;
+						var lower = Math.max(leftHeight, rightHeight);
+						ny = Math.min(ny, lower);
+						if (onLeftBlock || onRightBlock) {
+							if (onLeftBlock) {
+								ny = Math.min(ny, leftHeight);
+							}
+							if (onRightBlock) {
+								ny = Math.min(ny, rightHeight);
+							}
+							vy = 0;
+							onGround = true;
+						} else {
+							onGround = false;
+						}
+						player.y = Math.min(260, ny);
+						return true;
+					}
+				);
+				
+				// addBlock
+				taskList.push(
+					(function() {
+						var prev = 0;
+						var continueCount = 0;
+						return function () {
+							if (~~(prevDistance / 40) != ~~(distance / 40)) {
+								var dist = distance + 360;
+								var random = ~~(4 * Math.random());
+								var next = (tryCount % 2 == 0) ? 0 : Math.min(prev + 2, Math.max(prev - 1, random));
+								if (prev != next && continueCount < 3) {
+									next = prev;
+								}
+								if (prev == next) {
+									continueCount++;
+								} else {
+									continueCount = 0;
+								}
+								prev = next;
+								blockManager.setBlock(dist, next);
+							}
+							return true;
+						};
+					})()
+				);
+				
+				stage.on(
+					"mousedown",
+					function() {
+						if (tryCount % 2 == 1 && onGround) {
+							onGround = false;
+							vy = -25;
+						}
+					}
+				);
+				
+				createjs.Ticker.setFPS(30);
+				createjs.Ticker.timingMode = createjs.Ticker.RAF_SYNCHED;
+				createjs.Ticker.on("tick", render);
+			}
+			
+			function initBlockManager() {
+				var blockMap = new Array(10);
+				
+				for (var i = 0; i < blockMap.length; i++) {
+					blockMap[i] = 0;
+				}
+				
+				blockManager = { };
+				
+				blockManager.getBlockHeight = function(distance) {
+					return blockMap[(~~(distance / 40)) % blockMap.length];
+				};
+				
+				blockManager.getBlockOffset = function(distance) {
+					return distance % 40;
+				};
+				
+				blockManager.setBlock = function(distance, height) {
+					blockMap[(~~(distance / 40)) % blockMap.length] = height;
+				};
+			}
+			
+			function render() {
+				var time = new Date().getTime();
+				var expectedFrameCount = (time - startTime) * fps / 1000;
+				while (expectedFrameCount >= frameCount) {
+					update();
+					frameCount++;
+				}
+				
+				stage.update();
+			}
+			
+			function update() {
+				var tempTaskList = taskList;
+				taskList = new Array();
+				taskList = tempTaskList.filter(function(element) { return element(); }).concat(taskList);
+			}
+			
+			function gameInit() {
+				title.visible = false;
+				startButton.visible = false;
+				scoreMessage.visible = true;
+				gameoverMessage.visible = false;
+				tweetButton.visible = false;
+				setVisibleOfTweetButton(false);
+				retryButton.visible = false;
+				score = 0;
+				updateScoreMessage();
+				player.x = -25;
+				player.y = 280;
+				vx = 10;
+				taskList.push(
+					function() {
+						player.x += 3;
+						if (player.x >= 80) {
+							player.x = 80;
+							beginCount = frameCount;
+							tryCount++;
+							startHitCheck();
+							return false;
+						}
+						return true;
+					}
+				);
+			}
+			
+			function startHitCheck() {
+				var count = tryCount;
+				taskList.push(
+					function() {
+						score = ~~((frameCount - beginCount) / 15);
+						updateScoreMessage();
+						vx = Math.min(39, ~~(10 + (frameCount - beginCount) / 300));
+						
+						var dist = distance + player.x + 19;
+						var height = blockManager.getBlockHeight(dist);
+						
+						if (player.y + 20 > 280 - height * 40) {
+							player.x -= vx;
+						}
+						
+						if (player.x + 20 <= 0) {
+							gameover();
+							return false;
+						}
+						
+						return true;
+					}
+				);
+			}
+			
+			function updateScoreMessage() {
+				scoreMessage.text = "Score: " + score;
+			}
+			
+			function setVisibleOfTweetButton(visible) {
+				var a = document.getElementById("custom-tweet-button");
+				if (visible) {
+					var url = encodeURI("https://twitter.com/intent/tweet?text=") + encodeURIComponent("ホモォダッシュ2！あなたのスコアは" + score + "でした。http://silight-jp.github.io/HomooDash2/ #ホモォダッシュ2");
+					a.href = url;
+					a.style.display = "block";
+				} else {
+					a.style.display = "none";
+				}
+			}
+			
+			function gameover() {
+				gameoverMessage.visible = true;
+				tweetButton.visible = true;
+				setVisibleOfTweetButton(true);
+				retryButton.visible = true;
+				tryCount++;
+			}
+			
+			window.addEventListener("load", init, false);
+	</script>
+	<a id="custom-tweet-button" target="_blank"></a>
+	</body>
+</html>
